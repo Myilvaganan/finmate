@@ -1,6 +1,7 @@
 """Get-or-create helpers for reference data (categories, merchants, accounts)."""
 from typing import Dict, Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.account import Account
@@ -32,18 +33,33 @@ def get_or_create_merchant(db: Session, normalized_name: str, display_name: str)
 def get_or_create_account(
     db: Session, user_id: str, bank_name: str, account_type: str, masked_number: str, currency: str, is_demo: bool = False
 ) -> Account:
-    account = db.query(Account).filter(
-        Account.user_id == user_id, Account.bank_name == bank_name,
-        Account.masked_account_number == masked_number,
-    ).first()
+    def _find() -> Optional[Account]:
+        return db.query(Account).filter(
+            Account.user_id == user_id, Account.bank_name == bank_name,
+            Account.masked_account_number == masked_number,
+        ).first()
+
+    account = _find()
     if account:
         return account
+
+    # Two statements for the same real account can be ingested by concurrent background jobs
+    # (each in its own DB session), so the check above and this insert aren't atomic together --
+    # without the unique constraint + retry, that race creates one duplicate Account per upload.
     account = Account(
         user_id=user_id, bank_name=bank_name, account_type=account_type,
         masked_account_number=masked_number, currency=currency, is_demo=is_demo,
     )
-    db.add(account)
-    db.flush()
+    try:
+        # A SAVEPOINT (not a full rollback) so a conflict only undoes this insert, leaving
+        # whatever else this session already flushed earlier in the same import untouched.
+        with db.begin_nested():
+            db.add(account)
+            db.flush()
+    except IntegrityError:
+        account = _find()
+        if not account:
+            raise
     return account
 
 

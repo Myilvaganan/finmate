@@ -21,14 +21,32 @@ _BANK_SIGNATURES = {
 # Column-name signatures used when bank name text isn't present (structural detection).
 _COLUMN_SIGNATURES = {
     "ICICI Bank": {"transaction remarks", "withdrawal amt", "deposit amt"},
-    "Axis Bank": {"particulars", "chq no", "withdrawal amt.", "deposit amt."},
+    "Axis Bank": {"particulars", "chq no", "tran date", "debit", "credit", "withdrawal amt.", "deposit amt."},
     "HDFC Bank": {"narration", "chq./ref.no.", "withdrawal amt.", "deposit amt."},
     "SBI": {"description", "debit", "credit", "balance"},
 }
 
+# IFSC code prefixes are the most reliable signal available: unlike free text, they can't be
+# confused with a counterparty bank mentioned inside a UPI transaction reference.
+_IFSC_PREFIX_TO_BANK = {
+    "ICIC": "ICICI Bank", "UTIB": "Axis Bank", "HDFC": "HDFC Bank", "SBIN": "SBI",
+    "KKBK": "Kotak Mahindra Bank", "INDB": "IndusInd Bank", "YESB": "Yes Bank", "IDFB": "IDFC FIRST Bank",
+}
+_IFSC_RE = re.compile(r"\b([A-Z]{4})0[A-Z0-9]{6}\b")
+
+# Free-text bank-name search is only safe over a small header window (e.g. the first page) --
+# scanning the whole statement risks matching a counterparty's bank name inside a transaction
+# description (e.g. a UPI payment "via ICICI Ban[k]") and misattributing the entire statement.
+_TEXT_SEARCH_WINDOW = 2000
+
 
 def detect_bank_from_text(text: str) -> str:
-    lower = (text or "").lower()
+    text = text or ""
+    ifsc_match = _IFSC_RE.search(text[:_TEXT_SEARCH_WINDOW])
+    if ifsc_match and ifsc_match.group(1) in _IFSC_PREFIX_TO_BANK:
+        return _IFSC_PREFIX_TO_BANK[ifsc_match.group(1)]
+
+    lower = text[:_TEXT_SEARCH_WINDOW].lower()
     for bank, patterns in _BANK_SIGNATURES.items():
         if any(re.search(p, lower) for p in patterns):
             return bank

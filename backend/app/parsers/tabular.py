@@ -1,4 +1,5 @@
 """Shared column-detection logic for CSV/Excel/HTML/generic tabular statements."""
+import re
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -40,6 +41,11 @@ def detect_column_map(columns: List[str]) -> Dict[str, Optional[str]]:
     }
 
 
+_SUMMARY_MARKER_RE = re.compile(
+    r"^(opening|closing)\s+balance\b|^(transaction\s+)?total\b|^b/f\b|^brought\s+forward\b", re.I
+)
+
+
 def dataframe_to_rows(df: pd.DataFrame) -> List[RawTransactionRow]:
     col_map = detect_column_map(list(df.columns))
     rows: List[RawTransactionRow] = []
@@ -57,6 +63,11 @@ def dataframe_to_rows(df: pd.DataFrame) -> List[RawTransactionRow]:
         date_raw = cell(row, "date")
         desc_raw = cell(row, "description")
         if not date_raw and not desc_raw:
+            continue
+        # Opening/closing-balance and running-total marker rows aren't real transactions --
+        # they often land in the date/amount columns and can otherwise fool fuzzy date parsing
+        # into hallucinating a bogus transaction date from the balance figure.
+        if _SUMMARY_MARKER_RE.match(date_raw) or _SUMMARY_MARKER_RE.match(desc_raw):
             continue
         rows.append(
             RawTransactionRow(

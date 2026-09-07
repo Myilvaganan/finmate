@@ -18,6 +18,7 @@ from app.core.logging import get_logger
 from app.models.account import Account
 from app.models.statement import Statement, StatementProcessingError
 from app.models.transaction import Transaction
+from app.models.user import User
 from app.parsers.bank_detection import mask_account_number
 from app.parsers.registry import registry
 from app.services.balance_validation import validate_balances
@@ -26,6 +27,7 @@ from app.services.duplicate_detection import DuplicateConfidence, ExistingTxnRef
 from app.services.lookup import (
     ensure_default_categories, get_or_create_account, get_or_create_merchant, load_learned_rules,
 )
+from app.services.merchant_normalization import looks_like_garbage_merchant
 from app.services.normalization import NormalizedTransaction, normalize_rows
 from app.services.overlap_detection import ExistingPeriod, OverlapType, detect_overlap
 from app.services.transfer_detection import classify_transaction_type
@@ -61,13 +63,16 @@ class StatementImportService:
         self.categories = ensure_default_categories(db)
         self.provider = get_ai_provider()
 
-    def ingest(self, user_id: str, file_path: str, original_filename: str, file_format: str) -> ImportSummary:
+    def ingest(
+        self, user_id: str, file_path: str, original_filename: str, file_format: str,
+        password: Optional[str] = None,
+    ) -> ImportSummary:
         with open(file_path, "rb") as f:
             sample = f.read(4096)
 
         parser = registry.detect_parser(original_filename, sample)
         try:
-            parsed = parser.parse(file_path)
+            parsed = parser.parse(file_path, password)
         except AppError:
             raise
         except Exception as exc:
@@ -78,6 +83,8 @@ class StatementImportService:
             self.db, user_id, parsed.bank_name, parsed.account_type,
             parsed.account_identifier or mask_account_number(original_filename), parsed.currency,
         )
+        user = self.db.get(User, user_id)
+        account_holder_name = user.full_name if user else None
 
         normalized = normalize_rows(parsed.rows, account.id, parsed.currency)
         if not normalized:
@@ -124,15 +131,22 @@ class StatementImportService:
             category_name, confidence, source = rule_based_category(
                 t.normalized_description, t.merchant_name, is_credit, learned_rules
             )
-            if category_name is None and self.provider.is_available:
+            merchant_name = t.merchant_name
+            needs_ai = self.provider.is_available and (category_name is None or looks_like_garbage_merchant(merchant_name))
+
+            if needs_ai:
                 result: CategorizationResult = self.provider.categorize_transaction(
                     t.original_description, t.amount, list({c.name for c in self.categories.values()})
                 )
-                category_name, confidence, source = result.category, result.confidence, "ai"
-            elif category_name is None:
+                if category_name is None:
+                    category_name, confidence, source = result.category, result.confidence, "ai"
+                if result.merchant and not looks_like_garbage_merchant(result.merchant):
+                    merchant_name = result.merchant
+
+            if category_name is None:
                 category_name, confidence, source = "Other", 0.2, "default"
 
-            txn_type = classify_transaction_type(t, [account.masked_account_number])
+            txn_type = classify_transaction_type(t, [account.masked_account_number], account_holder_name)
             if txn_type == "expense":
                 total_expenses += t.debit
             elif txn_type == "income":
@@ -144,7 +158,7 @@ class StatementImportService:
                 "value_date": t.value_date.isoformat() if t.value_date else None,
                 "original_description": t.original_description,
                 "normalized_description": t.normalized_description,
-                "merchant_name": t.merchant_name,
+                "merchant_name": merchant_name,
                 "reference_number": t.reference_number,
                 "debit": t.debit,
                 "credit": t.credit,
@@ -236,6 +250,8 @@ class StatementImportService:
 
         statement.status = "PROCESSED"
         statement.staging_transactions_json = None
+        self.db.flush()  # ensure every transaction just added is visible to the balance query below
+        self._refresh_account_balance(statement.account_id)
         self.db.commit()
 
         return {"imported": imported, "skipped_exact_duplicates": skipped_exact_duplicates}
@@ -250,3 +266,34 @@ class StatementImportService:
         if not statement or statement.user_id != user_id:
             raise AppError(ErrorCode.NOT_FOUND, "Statement not found.", status_code=404)
         return statement
+
+    def _refresh_account_balance(self, account_id: str) -> None:
+        """Recomputes an account's opening/closing balance from its transactions. Runs after
+        every confirmed import so the Accounts page reflects real data instead of staying at
+        the 0.0 default a freshly created account starts with."""
+        account = self.db.get(Account, account_id)
+        if not account:
+            return
+
+        latest = (
+            self.db.query(Transaction)
+            .filter(Transaction.account_id == account_id, Transaction.balance.isnot(None))
+            .order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc())
+            .first()
+        )
+        if latest is not None:
+            account.closing_balance = latest.balance
+        elif self.db.query(Transaction).filter(Transaction.account_id == account_id).count() == 0:
+            account.opening_balance = 0.0
+            account.closing_balance = 0.0
+            return
+
+        if account.opening_balance == 0.0:
+            earliest = (
+                self.db.query(Transaction)
+                .filter(Transaction.account_id == account_id, Transaction.balance.isnot(None))
+                .order_by(Transaction.transaction_date.asc(), Transaction.created_at.asc())
+                .first()
+            )
+            if earliest is not None:
+                account.opening_balance = round(earliest.balance - earliest.amount, 2)

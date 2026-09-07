@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 import { BRAND } from '@/config/brand'
 import type { ApiError } from '@/services/apiClient'
+import logoMark from '@/assets/finmate-mark.png'
 
 export function LoginPage() {
   const [mode, setMode] = useState<'login' | 'signup'>('login')
@@ -33,7 +34,7 @@ export function LoginPage() {
     <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--color-bg)' }}>
       <div className="w-full max-w-sm surface rounded-2xl p-8">
         <div className="flex items-center gap-2 mb-6">
-          <div className="h-8 w-8 rounded-md bg-[color:var(--color-accent)] flex items-center justify-center text-white font-bold">F</div>
+          <img src={logoMark} alt="" className="h-8 w-8 rounded-md object-cover" />
           <div>
             <div className="font-semibold leading-tight">{BRAND.name}</div>
             <div className="text-xs text-muted leading-tight">{BRAND.tagline}</div>

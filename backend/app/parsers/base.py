@@ -42,5 +42,6 @@ class BaseStatementParser(ABC):
         ...
 
     @abstractmethod
-    def parse(self, file_path: str) -> NormalizedStatement:
+    def parse(self, file_path: str, password: Optional[str] = None) -> NormalizedStatement:
+        """password is only meaningful for encrypted PDFs -- other parsers ignore it."""
         ...

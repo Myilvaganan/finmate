@@ -7,6 +7,7 @@ body can move unchanged into a Celery/RQ/SQS task later -- callers only depend o
 import json
 import traceback
 from pathlib import Path
+from typing import Optional
 
 from app.core.logging import get_logger
 from app.database.session import SessionLocal
@@ -24,8 +25,14 @@ STAGES = [
 ]
 
 
-def run_statement_ingestion(job_id: str, user_id: str, file_path: str, original_filename: str, file_format: str) -> None:
+def run_statement_ingestion(
+    job_id: str, user_id: str, file_path: str, original_filename: str, file_format: str,
+    password: Optional[str] = None,
+) -> None:
     db = SessionLocal()
+    # A password-required/incorrect PDF isn't a failed upload in the usual sense -- the file
+    # is kept so the frontend can resubmit the same job with a password without re-uploading.
+    keep_file = False
     try:
         job = db.get(UploadJob, job_id)
         if not job:
@@ -41,7 +48,7 @@ def run_statement_ingestion(job_id: str, user_id: str, file_path: str, original_
             job.progress = 80
             db.commit()
 
-            summary = service.ingest(user_id, file_path, original_filename, file_format)
+            summary = service.ingest(user_id, file_path, original_filename, file_format, password)
 
             # Processing always lands in NEEDS_REVIEW: the user must confirm the import
             # (see POST /api/statements/{id}/confirm) even when there are no conflicts,
@@ -53,16 +60,25 @@ def run_statement_ingestion(job_id: str, user_id: str, file_path: str, original_
         except AppError as exc:
             logger.warning("Statement ingestion failed [job=%s stage=processing]: %s", job_id, exc.code)
             job.status = "FAILED"
-            job.error_message = exc.message
+            job.error_message = json.dumps({"code": exc.code, "message": exc.message})
+            if exc.code in ("PDF_PASSWORD_REQUIRED", "PDF_PASSWORD_INCORRECT"):
+                keep_file = True
+                job.error_message = json.dumps({
+                    "code": exc.code, "message": exc.message,
+                    "retry_context": {
+                        "file_path": file_path, "original_filename": original_filename, "file_format": file_format,
+                    },
+                })
             db.add(StatementProcessingError(
                 statement_id=job.statement_id or "unknown", stage="ingest", error_code=exc.code, message=exc.message,
             )) if job.statement_id else None
         except Exception as exc:
             logger.exception("Unexpected failure during statement ingestion [job=%s]", job_id)
             job.status = "FAILED"
-            job.error_message = "An unexpected error occurred while processing this statement."
+            job.error_message = json.dumps({"code": "DATABASE_ERROR", "message": "An unexpected error occurred while processing this statement."})
 
         db.commit()
     finally:
-        delete_temp_file(Path(file_path))
+        if not keep_file:
+            delete_temp_file(Path(file_path))
         db.close()

@@ -52,6 +52,25 @@ export function ChatDataCard({ data }: { data: Record<string, any> }) {
     )
   }
 
+  if (Array.isArray(data.emis) && data.emis.length > 0) {
+    return (
+      <div className="surface-2 border border-default rounded-lg p-3 mt-2 space-y-1.5">
+        {typeof data.total_monthly_emi === 'number' && (
+          <div className="flex justify-between text-xs pb-1 mb-1 border-b border-default">
+            <span className="text-muted">Total monthly EMI</span>
+            <span className="font-semibold">{formatCurrency(data.total_monthly_emi)}</span>
+          </div>
+        )}
+        {data.emis.slice(0, 5).map((e: any, i: number) => (
+          <div key={i} className="flex justify-between text-xs">
+            <span className="truncate mr-2">{e.merchant} <span className="text-muted">({e.frequency})</span></span>
+            <span className="font-medium shrink-0">{formatCurrency(e.amount)}</span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
   if (Array.isArray(data.recurring) && data.recurring.length > 0) {
     return (
       <div className="surface-2 border border-default rounded-lg p-3 mt-2 space-y-1.5">

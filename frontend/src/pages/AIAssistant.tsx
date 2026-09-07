@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Send, Sparkles } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
 import { chatService } from '@/services/chatService'
 import { ChatDataCard } from '@/components/ui/ChatDataCard'
 
@@ -8,6 +9,7 @@ const SUGGESTED = [
   'What are my top 5 expense categories?',
   'Compare this month with last month.',
   'Show my recurring payments.',
+  'What are my existing EMIs?',
   'What were my biggest transactions?',
   'How much did I save this year?',
 ]
@@ -80,7 +82,13 @@ export function AIAssistantPage() {
               {m.factType && m.role === 'assistant' && (
                 <div className="text-[10px] uppercase tracking-wide opacity-60 mb-1 font-semibold">{m.factType}</div>
               )}
-              {m.content}
+              {m.role === 'assistant' ? (
+                <div className="chat-markdown">
+                  <ReactMarkdown>{m.content}</ReactMarkdown>
+                </div>
+              ) : (
+                m.content
+              )}
               {m.role === 'assistant' && m.structuredData && <ChatDataCard data={m.structuredData} />}
             </div>
           </div>

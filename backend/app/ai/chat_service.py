@@ -1,9 +1,12 @@
-"""Chat pipeline: Question -> Intent Detection -> Query Planning -> Structured Retrieval ->
-Calculation -> LLM Explanation. The LLM only explains numbers that tools.py already computed."""
+"""Chat entry point. Advanced providers (OpenAI, Anthropic) drive their own multi-round tool
+calling in AIProvider.answer_with_tools, picking whatever FinancialTools methods they need to
+answer an arbitrary free-text question. Providers without native tool calling fall back to the
+keyword-based single-shot routing below, which only ever hands the LLM numbers tools.py already
+computed -- it never invents financial figures itself."""
 import re
 from dataclasses import dataclass
 from datetime import date
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
@@ -65,51 +68,53 @@ def _extract_category(question: str) -> Optional[str]:
 def route_question(db: Session, user_id: str, question: str, provider: AIProvider, today: Optional[date] = None) -> ChatAnswer:
     today = today or date.today()
     tools = FinancialTools(db, user_id)
+    text, data = provider.answer_with_tools(question, tools, today)
+    return ChatAnswer(text=text, structured_data=data, fact_type="FACT")
+
+
+def route_question_fallback(question: str, tools: FinancialTools, provider: AIProvider, today: Optional[date] = None) -> Tuple[str, Dict]:
+    """Single-shot keyword-based routing, used by providers without native tool calling."""
+    today = today or date.today()
     period = _resolve_period(question, today)
     start, end = period if period else (None, None)
     q = question.lower()
 
     if "recurring" in q or "subscription" in q:
         data = tools.get_recurring_transactions()
-        fact_type = "FACT"
+    elif "account" in q or "balance" in q:
+        data = tools.list_accounts()
     elif "above" in q or "large" in q or "biggest" in q:
         amount = _extract_amount(question) or 50000
         data = tools.get_large_transactions(amount, start, end)
-        fact_type = "FACT"
     elif "compare" in q and "last month" in q:
         this_start = today.replace(day=1)
         last_end = this_start - relativedelta(days=1)
         last_start = last_end.replace(day=1)
-        data = tools.compare_periods((this_start, today), (last_start, last_end))
-        fact_type = "CALCULATION"
+        data = tools.compare_periods(this_start, today, last_start, last_end)
     elif "save" in q or "savings" in q:
         data = tools.get_savings_rate(start, end)
-        fact_type = "CALCULATION"
     elif "income" in q or "earn" in q:
         data = tools.get_total_income(start, end)
-        fact_type = "FACT"
     else:
         category = _extract_category(question)
         if category:
             data = tools.get_category_spending(category, start, end)
-            fact_type = "FACT"
-        elif "swiggy" in q or "zomato" in q or "amazon" in q or "flipkart" in q or "netflix" in q:
-            merchant = next(m for m in ("swiggy", "zomato", "amazon", "flipkart", "netflix") if m in q)
-            data = tools.get_merchant_spending(merchant, start, end)
-            fact_type = "FACT"
         else:
-            data = tools.get_total_expenses(start, end)
-            fact_type = "FACT"
+            merchant = re.search(r"(?:at|from|on)\s+([a-zA-Z][\w& ]{1,30})", question)
+            if merchant:
+                data = tools.get_merchant_spending(merchant.group(1).strip(), start, end)
+            else:
+                data = tools.get_total_expenses(start, end)
 
     if not provider.is_available:
-        text = _fallback_explanation(data, fact_type)
+        text = _fallback_explanation(data)
     else:
         text = provider.answer_financial_question(question, data)
 
-    return ChatAnswer(text=text, structured_data=data, fact_type=fact_type)
+    return text, data
 
 
-def _fallback_explanation(data: Dict, fact_type: str) -> str:
+def _fallback_explanation(data: Dict) -> str:
     if not data or all(v in (None, 0, [], {}) for v in data.values()):
         return "I don't have enough transaction data to answer that."
     parts = []

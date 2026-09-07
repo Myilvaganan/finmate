@@ -1,20 +1,27 @@
 """Anthropic provider. Never called from the frontend -- API key lives only in backend env."""
 import json
-from typing import Dict, List
+from datetime import date
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from app.ai.base import AIProvider, CategorizationResult
 from app.ai.prompts import (
     CATEGORIZER_SYSTEM_PROMPT, FINANCIAL_ASSISTANT_SYSTEM_PROMPT,
-    INSIGHT_EXPLAINER_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT,
+    INSIGHT_EXPLAINER_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT, TOOL_CALLING_SYSTEM_PROMPT,
 )
 from app.core.config import get_settings
 from app.core.logging import get_logger
 
+if TYPE_CHECKING:
+    from app.ai.tools import FinancialTools
+
 logger = get_logger(__name__)
+
+_MAX_TOOL_ROUNDS = 6
 
 
 class AnthropicProvider(AIProvider):
     name = "anthropic"
+    supports_tool_calling = True
 
     def __init__(self):
         settings = get_settings()
@@ -42,7 +49,7 @@ class AnthropicProvider(AIProvider):
         prompt = (
             f"Transaction description: {description}\nAmount: {amount}\n"
             f"Pick the best category from: {candidate_categories}.\n"
-            'Respond with JSON only: {"category": "...", "subcategory": "...", "merchant": "...", '
+            'Respond with JSON only: {"category": "...", "subcategory": "...", "merchant": "<clean human-readable name, or empty string if none found>", '
             '"confidence": 0-1, "reason": "..."}'
         )
         raw = self._complete(CATEGORIZER_SYSTEM_PROMPT, prompt)
@@ -73,3 +80,44 @@ class AnthropicProvider(AIProvider):
             SUMMARY_SYSTEM_PROMPT,
             f"Period: {period_label}\nFacts: {json.dumps(facts)}",
         )
+
+    def answer_with_tools(self, question: str, tools: "FinancialTools", today: Optional[date] = None) -> Tuple[str, Dict]:
+        if not self._client:
+            return super().answer_with_tools(question, tools, today)
+        from app.ai.tools import TOOL_SCHEMAS
+
+        today = today or date.today()
+        schemas = [
+            {"name": spec["name"], "description": spec["description"], "input_schema": spec["parameters"]}
+            for spec in TOOL_SCHEMAS
+        ]
+        system = TOOL_CALLING_SYSTEM_PROMPT.format(today=today.isoformat())
+        messages: List[Dict] = [{"role": "user", "content": question}]
+        collected: Dict = {}
+        try:
+            for _ in range(_MAX_TOOL_ROUNDS):
+                resp = self._client.messages.create(
+                    model=self.model, max_tokens=800, system=system, messages=messages, tools=schemas,
+                )
+                messages.append({"role": "assistant", "content": resp.content})
+                if resp.stop_reason != "tool_use":
+                    text = "".join(block.text for block in resp.content if block.type == "text")
+                    return text or "I don't have enough transaction data to answer that.", collected
+
+                tool_results = []
+                for block in resp.content:
+                    if block.type != "tool_use":
+                        continue
+                    result = tools.dispatch(block.name, block.input or {})
+                    collected[block.name] = result
+                    tool_results.append({
+                        "type": "tool_result", "tool_use_id": block.id, "content": json.dumps(result, default=str),
+                    })
+                messages.append({"role": "user", "content": tool_results})
+
+            final = self._client.messages.create(model=self.model, max_tokens=800, system=system, messages=messages)
+            text = "".join(block.text for block in final.content if block.type == "text")
+            return text or "I don't have enough transaction data to answer that.", collected
+        except Exception as exc:
+            logger.warning("Anthropic tool-calling chat failed: %s", type(exc).__name__)
+            return super().answer_with_tools(question, tools, today)

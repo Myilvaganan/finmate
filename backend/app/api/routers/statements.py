@@ -8,7 +8,7 @@ from app.api.deps import get_current_user
 from app.core.errors import AppError, ErrorCode
 from app.database.session import get_db
 from app.models.job import UploadJob
-from app.models.statement import Statement
+from app.models.statement import Statement, StatementProcessingError
 from app.models.user import User
 from app.schemas.common import success
 from app.services.audit import record_audit
@@ -79,9 +79,17 @@ def cancel_statement(statement_id: str, user: User = Depends(get_current_user), 
 def delete_statement(statement_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     statement = _get_owned(db, statement_id, user.id)
     from app.models.transaction import Transaction
+
+    account_id = statement.account_id
     txn_count = db.query(Transaction).filter(Transaction.statement_id == statement.id).count()
+    # Delete children of the statement first (FK constraints are enforced on Postgres/RDS).
+    db.query(StatementProcessingError).filter(StatementProcessingError.statement_id == statement.id).delete()
+    db.query(UploadJob).filter(UploadJob.statement_id == statement.id).update({UploadJob.statement_id: None})
     db.query(Transaction).filter(Transaction.statement_id == statement.id).delete()
     db.delete(statement)
+    db.flush()
+    if account_id:
+        StatementImportService(db)._refresh_account_balance(account_id)
     db.commit()
     record_audit(db, user.id, "statement_deleted", "statement", statement_id, {"transactions_deleted": txn_count})
     return success({"deleted": True, "transactions_deleted": txn_count})

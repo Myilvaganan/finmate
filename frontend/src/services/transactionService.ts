@@ -14,6 +14,8 @@ export interface Transaction {
   amount: number
   balance: number | null
   account_id: string
+  bank_name: string
+  account_masked: string
   payment_method: string
   is_duplicate: boolean
   is_excluded: boolean
@@ -27,11 +29,18 @@ export interface TransactionFilters {
   end_date?: string
   account_id?: string
   category_id?: string
+  merchant_id?: string
   search?: string
   txn_type?: string
   min_amount?: number
   max_amount?: number
+  payment_method?: string
+  is_essential?: boolean
+  weekday?: 'weekday' | 'weekend'
 }
+
+export const TRANSACTION_TYPES = ['income', 'expense', 'transfer', 'investment', 'cash_withdrawal', 'card_payment'] as const
+export const PAYMENT_METHODS = ['upi', 'card', 'netbanking', 'cash', 'cheque', 'neft_rtgs', 'other'] as const
 
 export const transactionService = {
   async list(filters: TransactionFilters) {

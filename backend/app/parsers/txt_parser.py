@@ -1,3 +1,5 @@
+from typing import Optional
+
 import pandas as pd
 
 from app.parsers.base import BaseStatementParser, NormalizedStatement
@@ -15,7 +17,7 @@ class TXTStatementParser(BaseStatementParser):
     def can_parse(self, filename: str, sample: bytes) -> bool:
         return filename.lower().endswith(".txt")
 
-    def parse(self, file_path: str) -> NormalizedStatement:
+    def parse(self, file_path: str, password: Optional[str] = None) -> NormalizedStatement:
         try:
             df = pd.read_csv(
                 file_path, dtype=str, sep=None, engine="python",

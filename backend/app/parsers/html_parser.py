@@ -1,3 +1,5 @@
+from typing import Optional
+
 import pandas as pd
 from bs4 import BeautifulSoup
 
@@ -16,7 +18,7 @@ class HTMLStatementParser(BaseStatementParser):
     def can_parse(self, filename: str, sample: bytes) -> bool:
         return filename.lower().endswith((".html", ".htm"))
 
-    def parse(self, file_path: str) -> NormalizedStatement:
+    def parse(self, file_path: str, password: Optional[str] = None) -> NormalizedStatement:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             html = f.read()
 

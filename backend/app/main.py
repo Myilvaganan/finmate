@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 
-from app.api.routers import accounts, ai, analytics, auth, jobs, reports, statements, transactions
+from app.api.routers import accounts, ai, analytics, auth, categories, jobs, reports, statements, transactions
 from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
 from app.core.logging import get_logger
@@ -60,6 +60,7 @@ app.include_router(auth.router)
 app.include_router(statements.router)
 app.include_router(transactions.router)
 app.include_router(accounts.router)
+app.include_router(categories.router)
 app.include_router(analytics.router)
 app.include_router(ai.router)
 app.include_router(jobs.router)

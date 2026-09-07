@@ -7,6 +7,7 @@ import { BRAND } from '@/config/brand'
 import { useAuth } from '@/context/AuthContext'
 import { useTheme } from '@/context/ThemeContext'
 import { useState } from 'react'
+import logoMark from '@/assets/finmate-mark.png'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -41,7 +42,7 @@ export function AppLayout() {
         style={{ background: 'var(--color-sidebar-bg)', color: 'var(--color-sidebar-fg)' }}
       >
         <div className="px-5 py-5 flex items-center gap-2">
-          <div className="h-7 w-7 rounded-md bg-[color:var(--color-accent)] flex items-center justify-center text-white text-sm font-bold">F</div>
+          <img src={logoMark} alt="" className="h-7 w-7 rounded-md object-cover" />
           <div>
             <div className="font-semibold text-white leading-tight">{BRAND.name}</div>
             <div className="text-[11px] text-white/40 leading-tight">{BRAND.tagline}</div>

@@ -16,6 +16,17 @@ from app.utils.fingerprint import transaction_fingerprint
 _DEBIT_WORDS = {"debit", "dr", "withdrawal", "amount debited", "wd"}
 _CREDIT_WORDS = {"credit", "cr", "deposit", "amount credited", "dep"}
 
+_MARKUP_TAG_RE = re.compile(r"<[^<>]*>")
+
+
+def _strip_markup(text: str) -> str:
+    """Some PDF exports (e.g. broker/trading statements) embed literal rich-text formatting
+    tags like <style fontName='Mulish' fontSize='8'>...</style> in a cell instead of plain
+    text -- pdfplumber extracts them verbatim. Strip the tags, keeping their inner text."""
+    text = _MARKUP_TAG_RE.sub(" ", text or "")
+    return re.sub(r"\s+", " ", text).strip()
+
+
 _PAYMENT_METHOD_PATTERNS = [
     ("upi", re.compile(r"\bUPI\b", re.I)),
     ("card", re.compile(r"\bPOS\b|\bCARD\b|\bVISA\b|\bMASTERCARD\b", re.I)),
@@ -73,6 +84,8 @@ def normalize_row(row: RawTransactionRow, account_id: str, currency: str) -> Opt
     if ambiguous:
         warnings.append(f"Row {row.row_index}: date '{row.transaction_date_raw}' is ambiguous; assumed DD/MM.")
 
+    description_clean = _strip_markup(row.description_raw)
+
     debit = 0.0
     credit = 0.0
 
@@ -91,8 +104,8 @@ def normalize_row(row: RawTransactionRow, account_id: str, currency: str) -> Opt
             debit = abs(amount_val)
             warnings.append(f"Row {row.row_index}: could not determine debit/credit; assumed debit.")
 
-    normalized_desc = normalize_description(row.description_raw)
-    merchant_name = normalize_merchant(row.description_raw)
+    normalized_desc = normalize_description(description_clean)
+    merchant_name = normalize_merchant(description_clean)
     balance = _to_float(row.balance_raw) if row.balance_raw else None
 
     fingerprint = transaction_fingerprint(
@@ -109,7 +122,7 @@ def normalize_row(row: RawTransactionRow, account_id: str, currency: str) -> Opt
         transaction_date=txn_date,
         value_date=parse_transaction_date(row.value_date_raw) if row.value_date_raw else None,
         date_ambiguous=ambiguous,
-        original_description=row.description_raw,
+        original_description=description_clean,
         normalized_description=normalized_desc,
         merchant_name=merchant_name,
         reference_number=row.reference_raw,
@@ -117,7 +130,7 @@ def normalize_row(row: RawTransactionRow, account_id: str, currency: str) -> Opt
         credit=credit,
         amount=credit - debit,
         balance=balance,
-        payment_method=_detect_payment_method(row.description_raw),
+        payment_method=_detect_payment_method(description_clean),
         fingerprint=fingerprint,
         warnings=warnings,
     )

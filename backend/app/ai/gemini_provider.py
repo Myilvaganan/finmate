@@ -48,7 +48,7 @@ class GeminiProvider(AIProvider):
         prompt = (
             f"Transaction description: {description}\nAmount: {amount}\n"
             f"Pick the best category from: {candidate_categories}.\n"
-            'Respond with JSON only: {"category": "...", "subcategory": "...", "merchant": "...", '
+            'Respond with JSON only: {"category": "...", "subcategory": "...", "merchant": "<clean human-readable name, or empty string if none found>", '
             '"confidence": 0-1, "reason": "..."}'
         )
         raw = self._generate(CATEGORIZER_SYSTEM_PROMPT, prompt)

@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlalchemy import String, Float, ForeignKey, Boolean, Index
+from sqlalchemy import String, Float, ForeignKey, Boolean, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.session import Base
@@ -8,7 +8,13 @@ from app.models.mixins import TimestampMixin, gen_uuid
 
 class Account(Base, TimestampMixin):
     __tablename__ = "accounts"
-    __table_args__ = (Index("ix_accounts_user_id", "user_id"),)
+    __table_args__ = (
+        Index("ix_accounts_user_id", "user_id"),
+        # Enforced at the DB level (not just in get_or_create_account's app-side check) because
+        # concurrent uploads of statements for the same real account race the check-then-insert
+        # and otherwise end up creating one duplicate Account per file.
+        UniqueConstraint("user_id", "bank_name", "masked_account_number", name="uq_accounts_user_bank_number"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)

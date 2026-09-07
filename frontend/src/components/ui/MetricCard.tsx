@@ -1,5 +1,6 @@
 import { ArrowDownRight, ArrowUpRight, type LucideIcon } from 'lucide-react'
 import { formatCurrency } from '@/lib/format'
+import { useCountUp } from '@/hooks/useCountUp'
 
 interface MetricCardProps {
   label: string
@@ -17,9 +18,10 @@ export function MetricCard({
 }: MetricCardProps) {
   const positive = (changePct ?? 0) >= 0
   const goodDirection = invertColor ? !positive : positive
+  const animatedValue = useCountUp(value)
 
   return (
-    <div className="surface rounded-xl p-5 flex flex-col gap-2 min-w-0">
+    <div className="surface rounded-xl p-5 flex flex-col gap-2 min-w-0 animate-fade-in-up">
       <div className="flex items-center justify-between">
         <span className="text-sm text-muted">{label}</span>
         {Icon && (
@@ -32,7 +34,7 @@ export function MetricCard({
         )}
       </div>
       <span className="text-2xl font-semibold tracking-tight truncate">
-        {isCurrency ? formatCurrency(value) : `${value}${suffix}`}
+        {isCurrency ? formatCurrency(animatedValue) : `${Math.round(animatedValue)}${suffix}`}
       </span>
       {changePct !== null && changePct !== undefined && (
         <div className={`flex items-center gap-1 text-xs font-medium ${goodDirection ? 'text-[color:var(--color-positive)]' : 'text-[color:var(--color-negative)]'}`}>

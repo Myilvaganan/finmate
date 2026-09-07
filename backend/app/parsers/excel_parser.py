@@ -1,3 +1,5 @@
+from typing import Optional
+
 import pandas as pd
 
 from app.parsers.base import BaseStatementParser, NormalizedStatement
@@ -15,7 +17,7 @@ class ExcelStatementParser(BaseStatementParser):
     def can_parse(self, filename: str, sample: bytes) -> bool:
         return filename.lower().endswith((".xlsx", ".xls"))
 
-    def parse(self, file_path: str) -> NormalizedStatement:
+    def parse(self, file_path: str, password: Optional[str] = None) -> NormalizedStatement:
         try:
             sheets = pd.read_excel(file_path, dtype=str, sheet_name=None)
         except Exception as exc:

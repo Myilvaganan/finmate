@@ -34,7 +34,7 @@ class OCRStatementParser(BaseStatementParser):
     def can_parse(self, filename: str, sample: bytes) -> bool:
         return filename.lower().endswith((".png", ".jpg", ".jpeg"))
 
-    def parse(self, file_path: str) -> NormalizedStatement:
+    def parse(self, file_path: str, password: Optional[str] = None) -> NormalizedStatement:
         text = _extract_text(file_path)
         if text is None:
             raise AppError(

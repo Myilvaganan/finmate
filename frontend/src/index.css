@@ -71,3 +71,21 @@ body {
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+
+.chat-markdown { line-height: 1.5; }
+.chat-markdown > * + * { margin-top: 0.5em; }
+.chat-markdown p { margin: 0; }
+.chat-markdown ul, .chat-markdown ol { padding-left: 1.25em; margin: 0; }
+.chat-markdown li + li { margin-top: 0.25em; }
+.chat-markdown strong { font-weight: 600; }
+.chat-markdown code { background: var(--color-surface-2); border-radius: 4px; padding: 0.1em 0.35em; font-size: 0.9em; }
+.chat-markdown a { color: var(--color-accent); text-decoration: underline; }
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up { animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in-up { animation: none; }
+}

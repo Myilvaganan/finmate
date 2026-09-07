@@ -8,6 +8,8 @@ from app.api.deps import get_current_user
 from app.core.errors import AppError, ErrorCode
 from app.database.session import get_db
 from app.models.account import Account
+from app.models.job import UploadJob
+from app.models.statement import Statement, StatementProcessingError
 from app.models.transaction import Transaction
 from app.models.user import User
 from app.parsers.bank_detection import mask_account_number
@@ -72,11 +74,20 @@ def update_account(account_id: str, payload: AccountUpdate, user: User = Depends
 @router.delete("/{account_id}")
 def delete_account(account_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     account = _get_owned(db, account_id, user.id)
+
+    statement_ids = [s.id for s in db.query(Statement.id).filter(Statement.account_id == account.id).all()]
     txn_count = db.query(Transaction).filter(Transaction.account_id == account.id).count()
-    db.query(Transaction).filter(Transaction.account_id == account.id).delete()
+
+    if statement_ids:
+        # Delete children of statements first (FK constraints on Postgres/RDS are enforced,
+        # unlike the SQLite default used in early local testing).
+        db.query(StatementProcessingError).filter(StatementProcessingError.statement_id.in_(statement_ids)).delete(synchronize_session=False)
+        db.query(UploadJob).filter(UploadJob.statement_id.in_(statement_ids)).update({UploadJob.statement_id: None}, synchronize_session=False)
+    db.query(Transaction).filter(Transaction.account_id == account.id).delete(synchronize_session=False)
+    db.query(Statement).filter(Statement.account_id == account.id).delete(synchronize_session=False)
     db.delete(account)
     db.commit()
-    record_audit(db, user.id, "account_deleted", "account", account_id, {"transactions_deleted": txn_count})
+    record_audit(db, user.id, "account_deleted", "account", account_id, {"transactions_deleted": txn_count, "statements_deleted": len(statement_ids)})
     return success({"deleted": True, "transactions_deleted": txn_count})
 
 

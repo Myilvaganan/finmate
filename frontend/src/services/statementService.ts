@@ -11,7 +11,18 @@ export const statementService = {
   },
   async getJob(jobId: string) {
     const res = await apiClient.get(`/jobs/${jobId}`)
-    return res.data.data
+    return res.data.data as {
+      id: string; status: string; progress: number; statement_id: string | null
+      error_code: string | null; error_message: string | null; result: any
+    }
+  },
+  async retryJobWithPassword(jobId: string, password: string) {
+    const form = new FormData()
+    form.append('password', password)
+    const res = await apiClient.post(`/jobs/${jobId}/retry`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return res.data.data as { job_id: string; status: string }
   },
   async list() {
     const res = await apiClient.get('/statements')

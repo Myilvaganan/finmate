@@ -3,11 +3,13 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy import extract
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.errors import AppError, ErrorCode
 from app.database.session import get_db
+from app.models.account import Account
 from app.models.category import Category, Merchant
 from app.models.category import MerchantRule
 from app.models.transaction import Transaction
@@ -18,7 +20,8 @@ from app.services.audit import record_audit
 router = APIRouter(prefix="/api/transactions", tags=["transactions"])
 
 
-def _serialize(t: Transaction, categories: dict, merchants: dict) -> dict:
+def _serialize(t: Transaction, categories: dict, merchants: dict, accounts: dict) -> dict:
+    account = accounts.get(t.account_id)
     return {
         "id": t.id, "transaction_date": t.transaction_date.isoformat(),
         "description": t.original_description, "normalized_description": t.normalized_description,
@@ -26,6 +29,8 @@ def _serialize(t: Transaction, categories: dict, merchants: dict) -> dict:
         "category_id": t.category_id, "transaction_type": t.transaction_type,
         "debit": t.debit, "credit": t.credit, "amount": t.amount, "balance": t.balance,
         "account_id": t.account_id, "payment_method": t.payment_method,
+        "bank_name": account.bank_name if account else "",
+        "account_masked": account.masked_account_number if account else "",
         "is_duplicate": t.is_duplicate, "is_excluded": t.is_excluded, "notes": t.notes,
     }
 
@@ -35,8 +40,10 @@ def list_transactions(
     page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
     start_date: Optional[date] = None, end_date: Optional[date] = None,
     account_id: Optional[str] = None, category_id: Optional[str] = None,
-    merchant: Optional[str] = None, search: Optional[str] = None,
+    merchant_id: Optional[str] = None, search: Optional[str] = None,
     txn_type: Optional[str] = None, min_amount: Optional[float] = None, max_amount: Optional[float] = None,
+    payment_method: Optional[str] = None, is_essential: Optional[bool] = None,
+    weekday: Optional[str] = Query(None, pattern="^(weekday|weekend)$"),
     include_excluded: bool = False,
     user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ):
@@ -51,12 +58,23 @@ def list_transactions(
         q = q.filter(Transaction.account_id == account_id)
     if category_id:
         q = q.filter(Transaction.category_id == category_id)
+    if merchant_id:
+        q = q.filter(Transaction.merchant_id == merchant_id)
     if txn_type:
         q = q.filter(Transaction.transaction_type == txn_type)
     if min_amount is not None:
         q = q.filter((Transaction.debit >= min_amount) | (Transaction.credit >= min_amount))
     if max_amount is not None:
         q = q.filter((Transaction.debit <= max_amount) & (Transaction.credit <= max_amount))
+    if payment_method:
+        q = q.filter(Transaction.payment_method == payment_method)
+    if is_essential is not None:
+        q = q.join(Category, Transaction.category_id == Category.id).filter(Category.is_essential == is_essential)
+    if weekday:
+        # extract('dow', ...) is dialect-portable in SQLAlchemy: 0=Sunday..6=Saturday on both
+        # SQLite (strftime %w) and Postgres (EXTRACT dow).
+        dow = extract("dow", Transaction.transaction_date)
+        q = q.filter(dow.in_([0, 6]) if weekday == "weekend" else dow.notin_([0, 6]))
     if search:
         like = f"%{search}%"
         q = q.filter(Transaction.original_description.ilike(like))
@@ -69,9 +87,10 @@ def list_transactions(
 
     categories = {c.id: c.name for c in db.query(Category).all()}
     merchants = {m.id: m.display_name for m in db.query(Merchant).all()}
+    accounts = {a.id: a for a in db.query(Account).all()}
 
     return success(
-        [_serialize(t, categories, merchants) for t in rows],
+        [_serialize(t, categories, merchants, accounts) for t in rows],
         meta={"page": page, "page_size": page_size, "total": total, "total_pages": (total + page_size - 1) // page_size},
     )
 
@@ -81,7 +100,8 @@ def get_transaction(transaction_id: str, user: User = Depends(get_current_user),
     txn = _get_owned(db, transaction_id, user.id)
     categories = {c.id: c.name for c in db.query(Category).all()}
     merchants = {m.id: m.display_name for m in db.query(Merchant).all()}
-    return success(_serialize(txn, categories, merchants))
+    accounts = {a.id: a for a in db.query(Account).all()}
+    return success(_serialize(txn, categories, merchants, accounts))
 
 
 class TransactionUpdate(BaseModel):
@@ -133,7 +153,8 @@ def update_transaction(
     record_audit(db, user.id, "transaction_edited", "transaction", transaction_id, changes)
     categories = {c.id: c.name for c in db.query(Category).all()}
     merchants = {m.id: m.display_name for m in db.query(Merchant).all()}
-    return success(_serialize(txn, categories, merchants))
+    accounts = {a.id: a for a in db.query(Account).all()}
+    return success(_serialize(txn, categories, merchants, accounts))
 
 
 @router.delete("/{transaction_id}")

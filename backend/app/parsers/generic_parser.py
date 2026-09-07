@@ -1,4 +1,6 @@
 """Fallback for unrecognized tabular layouts: tries the most permissive column heuristics."""
+from typing import Optional
+
 import pandas as pd
 
 from app.parsers.base import BaseStatementParser, NormalizedStatement
@@ -13,7 +15,7 @@ class GenericStatementParser(BaseStatementParser):
     def can_parse(self, filename: str, sample: bytes) -> bool:
         return True
 
-    def parse(self, file_path: str) -> NormalizedStatement:
+    def parse(self, file_path: str, password: Optional[str] = None) -> NormalizedStatement:
         df = None
         for reader in (
             lambda p: pd.read_csv(p, dtype=str, sep=None, engine="python"),
