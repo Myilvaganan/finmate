@@ -1,0 +1,27 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node / frontend
+node_modules/
+dist/
+
+# Runtime data -- never commit real financial data, uploaded statements, or generated reports
+**/data/*.db
+**/data/*.sqlite
+**/uploads/*
+!**/uploads/.gitkeep
+**/reports/*
+!**/reports/.gitkeep
+
+# OS
+.DS_Store
